@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live 5G ToA+CP Positioning – GLOBECOM 2026</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--card:#f4f5f7;--bd:#d8dbe0}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8e8e8;--mut:#9aa0a8;--card:#1e2126;--bd:#343941}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif;padding:16px;max-width:1100px;margin:auto}
+h1{font-size:20px;margin:0 0 4px}p.s{color:var(--mut);margin:0 0 12px;font-size:13px}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:760px){.g{grid-template-columns:1fr}}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px}
+canvas{width:100%;aspect-ratio:1;display:block;touch-action:none}
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 16px;margin:12px 0}
+label{font-size:13px;display:block}label b{float:right;font-weight:600}
+input[type=range]{width:100%}select,button{font:inherit;padding:3px 8px}
+.st{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}.st div{flex:1;min-width:150px;padding:8px;border-radius:8px;border:1px solid var(--bd);background:var(--card)}
+.st big{font-size:20px;font-weight:700;display:block}
+small{color:var(--mut)}
+</style></head><body>
+<h1>Live 5G Positioning: Joint ToA + Carrier Phase with Correlated Errors</h1>
+<p class="s">Interactive companion to “Accuracy of Joint Time-Based and Carrier-Phase Positioning in 5G Networks under Correlated Measurement Errors”, IEEE GLOBECOM 2026 Workshop (N. Islam et al., Univ. Bremen). Drag the mobile terminal (MT) on the left map. Integer ambiguities are assumed resolved, as in the paper.</p>
+<div class="g">
+ <div class="c"><canvas id="map" width="700" height="700"></canvas></div>
+ <div class="c"><canvas id="zoom" width="700" height="700"></canvas></div>
+</div>
+<div class="st">
+ <div style="border-color:#e0533d"><small>ToA only</small><big id="e0">–</big><small>RMSE (cm)</small></div>
+ <div style="border-color:#3b7be0"><small>ToA+CP, ρ=0</small><big id="e1">–</big><small>RMSE (cm)</small></div>
+ <div style="border-color:#1fa35c"><small>ToA+CP, correlation-aware</small><big id="e2">–</big><small>RMSE (cm)</small></div>
+ <div><small>Gain of ρ-aware vs ρ=0</small><big id="gn">–</big><small id="sn"></small></div>
+</div>
+<div class="ctl">
+ <label>Scenario <select id="sc"><option>UMa</option><option>InF</option></select>
+  &nbsp;MT in <select id="cell"><option value="1">cell 1</option><option value="7">cell 7</option></select></label>
+ <label>Correlation ρ <b id="v_rho"></b><input id="rho" type="range" min="-0.95" max="0.95" step="0.05" value="0.5"></label>
+ <label>Bandwidth [MHz] <b id="v_B"></b><input id="B" type="range" min="10" max="400" step="10"></label>
+ <label>Carrier freq. [GHz] <b id="v_fc"></b><input id="fc" type="range" min="1" max="100" step="0.25"></label>
+ <label>BS Tx power [dBm] <b id="v_P"></b><input id="P" type="range" min="0" max="35" step="1"></label>
+ <label>Antenna elements (BS &amp; MT) <b id="v_Ne"></b><input id="Ne" type="range" min="1" max="16" step="1"></label>
+ <label>Number of BSs <b id="v_N"></b><input id="N" type="range" min="3" max="7" step="1" value="7"></label>
+ <label><input type="checkbox" id="mv" checked> MT moves automatically &nbsp; <button id="rs">Reset stats</button></label>
+</div>
+<p class="s">Model (paper Sec. II–III): ranges r<sub>τ</sub>=d+n<sub>τ</sub>, r<sub>φ</sub>=d+n<sub>φ</sub>; path loss PL=32+10γlog<sub>10</sub>d+20log<sub>10</sub>f<sub>c</sub>; SNR from Eq. (19); σ<sub>τ</sub>∝1/(B√SNR), σ<sub>φ</sub>∝1/(f<sub>c</sub>√SNR) via CRB-style constants; per-BS 2×2 covariance with cross-term ρσ<sub>τ</sub>σ<sub>φ</sub>; ML/WLS solved by Gauss–Newton. Absolute numbers here use illustrative scaling constants and are not the paper’s Monte Carlo results; trends (RMSE falls with |ρ|, rises with f<sub>c</sub>, falls with B, power, antennas, BSs) are what this demo shows.</p>
+<script>
+const $=id=>document.getElementById(id),c0=299792458;
+const DEF={UMa:{isd:500,fc:3.75,B:100,P:30,Ne:4,g:2.8},InF:{isd:50,fc:26,B:400,P:24,Ne:16,g:2.5}};
+let cfg,bs=[],mt={x:0,y:0},drag=false,t=0,fixes=[],ms=[0,0,0],n=0;
+const inp=['rho','B','fc','P','Ne','N'];
+function load(){cfg={...DEF[$('sc').value]};$('B').value=cfg.B;$('fc').value=cfg.fc;$('P').value=cfg.P;$('Ne').value=cfg.Ne;build();reset()}
+function build(){const d=cfg.isd;bs=[{x:0,y:0}];for(let k=0;k<6;k++){const a=k*Math.PI/3;bs.push({x:d*Math.cos(a),y:d*Math.sin(a)})}
+ const N=+$('N').value;$('v_N').textContent=N;mt={x:bs[$('cell').value-1].x,y:bs[$('cell').value-1].y+d*.2}}
+function reset(){ms=[0,0,0];n=0;fixes=[]}
+function inCell(p,b){const d=cfg.isd;let dx=Math.abs(p.x-b.x),dy=Math.abs(p.y-b.y);
+ // pointy-top hex with apothem d/2 along 0°,60°,120°
+ for(const a of [0,Math.PI/3,2*Math.PI/3]){if(Math.abs((p.x-b.x)*Math.cos(a)+(p.y-b.y)*Math.sin(a))>d/2)return false}return true}
+function gauss(){let u=0,v=0;while(!u)u=Math.random();v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function sig(d){const fc=+$('fc').value,B=+$('B').value*1e6,P=+$('P').value,G=10*Math.log10(+$('Ne').value);
+ const PL=32+10*cfg.g*Math.log10(Math.max(d,1))+20*Math.log10(fc);
+ const snr=Math.pow(10,(P+30-30+2*G-PL+174-10*Math.log10(B))/10); // P[dBm]+2G-PL-(N0+10logB) with N0=-174
+ const k=Math.sqrt(2*snr);return[c0/(2*Math.PI*(B/Math.sqrt(12))*k),(c0/(fc*1e9))/(2*Math.PI*k)]}
+function solve(x0,r,w,N){let x=x0.x,y=x0.y;for(let it=0;it<8;it++){let a=0,b=0,cc=0,g1=0,g2=0;
+ for(let i=0;i<N;i++){const dx=x-bs[i].x,dy=y-bs[i].y,d=Math.hypot(dx,dy)||1e-9,ux=dx/d,uy=dy/d,e=r[i]-d;
+  a+=w[i]*ux*ux;b+=w[i]*ux*uy;cc+=w[i]*uy*uy;g1+=w[i]*ux*e;g2+=w[i]*uy*e}
+ const det=a*cc-b*b||1e-12;x+=(cc*g1-b*g2)/det;y+=(a*g2-b*g1)/det}return{x,y}}
+function fix(p){const N=+$('N').value,rho=+$('rho').value,r0=[],r1=[],r2=[],w0=[],w1=[],w2=[];
+ for(let i=0;i<N;i++){const d=Math.hypot(p.x-bs[i].x,p.y-bs[i].y),[st,sp]=sig(d),z1=gauss(),z2=gauss();
+  const nt=st*z1,np0=sp*z2,npr=sp*(rho*z1+Math.sqrt(1-rho*rho)*z2);
+  const a=st*st,c=sp*sp,b=rho*st*sp;
+  r0.push(d+nt);w0.push(1/a);
+  r1.push((d+nt)*c/(a+c)+(d+np0)*a/(a+c));w1.push(1/a+1/c);
+  r2.push(((c-b)*(d+nt)+(a-b)*(d+npr))/(a+c-2*b));w2.push((a+c-2*b)/(a*c-b*b))}
+ const s=bs[0];return[solve(s,r0,w0,N),solve(s,r1,w1,N),solve(s,r2,w2,N)]}
+function step(){const c=+$('cell').value-1;
+ if(drag){}else if($('mv').checked){t+=.004;const b=bs[c],R=cfg.isd*.4;mt={x:b.x+R*Math.cos(t*3)*Math.cos(t),y:b.y+R*Math.sin(t*2.3)};if(!inCell(mt,b)){mt={x:b.x,y:b.y}}}
+ for(let k=0;k<3;k++){const e=fix(mt);e.forEach((q,j)=>{const er=(q.x-mt.x)**2+(q.y-mt.y)**2;ms[j]=n?ms[j]*.995+er*.005:er});n++;
+  fixes.push({e,o:{x:mt.x,y:mt.y}});if(fixes.length>150)fixes.shift()}
+ const r=ms.map(v=>Math.sqrt(v)*100);[0,1,2].forEach(j=>$('e'+j).textContent=r[j]<10?r[j].toFixed(2):r[j].toFixed(1));
+ $('gn').textContent=(100*(1-r[2]/r[1])).toFixed(1)+' %';$('sn').textContent='at ρ = '+(+$('rho').value).toFixed(2)+' (paper: 8 % UMa, 13 % InF at ρ=0.5)';
+ inp.forEach(k=>$('v_'+k).textContent=$(k).value);draw()}
+const col=['#e0533d','#3b7be0','#1fa35c'];
+function draw(){const cv=$('map'),g=cv.getContext('2d'),W=cv.width,sc=W/(cfg.isd*3.4),tx=x=>W/2+x*sc,ty=y=>W/2-y*sc;
+ g.clearRect(0,0,W,W);const N=+$('N').value,fg=getComputedStyle(document.body).color;g.strokeStyle='#8888';g.lineWidth=1.5;
+ bs.forEach((b,i)=>{g.beginPath();for(let k=0;k<6;k++){const a=Math.PI/6+k*Math.PI/3,R=cfg.isd/Math.sqrt(3);g.lineTo(tx(b.x+R*Math.cos(a)),ty(b.y+R*Math.sin(a)))}g.closePath();g.stroke()});
+ bs.forEach((b,i)=>{const on=i<N;g.fillStyle=on?'#8a5cf6':'#8886';g.beginPath();g.moveTo(tx(b.x),ty(b.y)-14);g.lineTo(tx(b.x)-9,ty(b.y)+8);g.lineTo(tx(b.x)+9,ty(b.y)+8);g.fill();
+  g.fillStyle=fg;g.font='14px system-ui';g.fillText('BS'+(i+1),tx(b.x)+12,ty(b.y)+4);
+  if(on){g.strokeStyle='#8a5cf633';g.beginPath();g.moveTo(tx(b.x),ty(b.y));g.lineTo(tx(mt.x),ty(mt.y));g.stroke()}});
+ g.fillStyle='#111';g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.arc(tx(mt.x),ty(mt.y),9,0,7);g.fill();g.stroke();
+ g.fillStyle=fg;g.fillText('MT (drag me)',tx(mt.x)+14,ty(mt.y)-12);
+ // zoom panel
+ const z=$('zoom'),h=z.getContext('2d'),s=Math.max(Math.sqrt(ms[0]),1e-4)*3.5,zs=W/2/s;h.clearRect(0,0,W,W);
+ h.strokeStyle='#8884';h.lineWidth=1;h.beginPath();h.moveTo(W/2,0);h.lineTo(W/2,W);h.moveTo(0,W/2);h.lineTo(W,W/2);h.stroke();
+ fixes.forEach((f,k)=>{const al=.15+.85*k/fixes.length;f.e.forEach((q,j)=>{h.globalAlpha=al;h.fillStyle=col[j];h.beginPath();h.arc(W/2+(q.x-f.o.x)*zs,W/2-(q.y-f.o.y)*zs,j==2?4:3,0,7);h.fill()})});h.globalAlpha=1;
+ h.fillStyle='#111';h.beginPath();h.arc(W/2,W/2,4,0,7);h.fill();
+ h.fillStyle=fg;h.font='15px system-ui';h.fillText('Position error cloud (centered on true MT position)',12,22);h.fillText('Box half-width ≈ '+(s*100).toFixed(1)+' cm',12,42);
+ [['ToA',0],['ToA+CP ρ=0',1],['ToA+CP ρ-aware',2]].forEach(([l,j],k)=>{h.fillStyle=col[j];h.fillRect(12,W-70+k*20,12,12);h.fillStyle=fg;h.fillText(l,30,W-60+k*20)})}
+function pt(e){const cv=$('map'),r=cv.getBoundingClientRect(),W=cv.width,sc=W/(cfg.isd*3.4);return{x:((e.clientX-r.left)/r.width*W-W/2)/sc,y:-((e.clientY-r.top)/r.height*W-W/2)/sc}}
+$('map').onpointerdown=e=>{drag=true;mt=pt(e);$('map').setPointerCapture(e.pointerId)};
+$('map').onpointermove=e=>{if(drag)mt=pt(e)};$('map').onpointerup=()=>drag=false;
+$('sc').onchange=load;$('cell').onchange=()=>{build();reset()};$('rs').onclick=reset;
+['rho','B','fc','P','Ne'].forEach(k=>$(k).oninput=reset);$('N').oninput=()=>{build();reset()};
+load();setInterval(step,50);
+</script></body></html>
